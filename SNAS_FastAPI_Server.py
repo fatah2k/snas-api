@@ -10,8 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from typing import Optional
 
-SUPABASE_URL = SUPABASE_KEY = "J1VqSJJzwUm8NoeIB47fYlBYQB5LhknxQuiiUPZ+bPajikn3d5Q8pvmy371sH64q+uWCXgK6omQHDeFRHxFmiQ=="
-SUPABASE_KEY = "sb_publishable_MOT4mA0OUFjPLDsRmWU0aA_OK3zUDhw"
+SUPABASE_URL = "https://fglmvdewfvxlqiwhpwue.supabase.co"
+SUPABASE_KEY = "J1VqSJJzwUm8NoeIB47fYlBYQB5LhknxQuiiUPZ+bPajikn3d5Q8pvmy371sH64q+uWCXgK6omQHDeFRHxFmiQ=="
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
