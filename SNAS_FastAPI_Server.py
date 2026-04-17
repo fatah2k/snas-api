@@ -1,150 +1,91 @@
-# =============================================================================
-# SNAS FastAPI Server — Somali National Address System
-# Version: 2.0 — Uses Supabase Python client (no DB password needed)
-# Project: fglmvdewfvxlqiwhpwue (West EU, Ireland)
-# Organisation: Amir Geosystems
-# =============================================================================
-
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from supabase import create_client, Client
 from typing import Optional
+import httpx
 
 SUPABASE_URL = "https://fglmvdewfvxlqiwhpwue.supabase.co"
-SUPABASE_KEY = "J1VqSJJzwUm8NoeIB47fYlBYQB5LhknxQuiiUPZ+bPajikn3d5Q8pvmy371sH64q+uWCXgK6omQHDeFRHxFmiQ=="
+SUPABASE_KEY = "sb_publishable_MOT4mA0OUFjPLDsRmWU0aA_OK3zUDhw"
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json"
+}
 
-app = FastAPI(
-    title="Somali National Address System API",
-    description="UPU S42-compliant bilingual address system. 333,055 roads. 92 districts. 8 Federal States.",
-    version="2.0.0"
-)
+app = FastAPI(title="Somali National Address System API", version="2.0.0")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+def db(table, params=""):
+    url = f"{SUPABASE_URL}/rest/v1/{table}?{params}"
+    r = httpx.get(url, headers={**HEADERS, "Prefer": "count=exact"})
+    return r.json(), int(r.headers.get("content-range", "0/0").split("/")[-1])
 
-@app.get("/", tags=["System"])
+@app.get("/")
 def root():
-    return {"system": "Somali National Address System", "version": "2.0.0", "organisation": "Amir Geosystems", "status": "live", "docs": "/docs"}
+    return {"system": "Somali National Address System", "version": "2.0.0", "status": "live", "docs": "/docs"}
 
-@app.get("/v1/health", tags=["System"])
-def health_check():
-    try:
-        states    = supabase.table("snas_states").select("*", count="exact").execute()
-        districts = supabase.table("snas_districts").select("*", count="exact").execute()
-        streets   = supabase.table("snas_streets").select("*", count="exact").execute()
-        return {"status": "healthy", "counts": {"states": states.count, "districts": districts.count, "streets": streets.count}}
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=str(e))
+@app.get("/v1/health")
+def health():
+    _, s = db("snas_states")
+    _, d = db("snas_districts")
+    _, st = db("snas_streets")
+    return {"status": "healthy", "counts": {"states": s, "districts": d, "streets": st}}
 
-@app.get("/v1/stats", tags=["System"])
-def national_stats():
-    try:
-        states    = supabase.table("snas_states").select("*", count="exact").execute()
-        districts = supabase.table("snas_districts").select("*", count="exact").execute()
-        streets   = supabase.table("snas_streets").select("*", count="exact").execute()
-        named     = supabase.table("snas_streets").select("*", count="exact").eq("is_nameless", False).execute()
-        nameless  = supabase.table("snas_streets").select("*", count="exact").eq("is_nameless", True).execute()
-        figures   = supabase.table("snas_figures").select("*", count="exact").eq("is_eligible", True).execute()
-        total = streets.count or 0
-        return {"system": "Somali National Address System", "stats": {"states": states.count, "districts": districts.count, "total_streets": total, "named_streets": named.count, "nameless_streets": nameless.count, "pct_named": round(named.count / total * 100, 1) if total > 0 else 0, "approved_figures": figures.count}}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/v1/stats")
+def stats():
+    _, s = db("snas_states")
+    _, d = db("snas_districts")
+    _, total = db("snas_streets")
+    _, named = db("snas_streets", "is_nameless=eq.false")
+    _, nameless = db("snas_streets", "is_nameless=eq.true")
+    return {"stats": {"states": s, "districts": d, "total_streets": total, "named_streets": named, "nameless_streets": nameless, "pct_named": round(named/total*100,1) if total else 0}}
 
-@app.get("/v1/states", tags=["Reference Data"])
-def list_states():
-    try:
-        res = supabase.table("snas_states").select("*").order("name_en").execute()
-        return {"count": len(res.data), "states": res.data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/v1/states")
+def states():
+    data, _ = db("snas_states", "order=name_en")
+    return {"count": len(data), "states": data}
 
-@app.get("/v1/districts", tags=["Reference Data"])
-def list_districts(state: Optional[str] = Query(None)):
-    try:
-        res = supabase.table("snas_districts").select("postcode_prefix, name_en, name_so, is_urban, survey_status, region_id").order("name_en").execute()
-        return {"count": len(res.data), "districts": res.data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/v1/districts")
+def districts():
+    data, _ = db("snas_districts", "select=postcode_prefix,name_en,name_so,is_urban,survey_status&order=name_en")
+    return {"count": len(data), "districts": data}
 
-@app.get("/v1/postcode/{prefix}", tags=["Address Lookup"])
-def postcode_lookup(prefix: str):
-    try:
-        res = supabase.table("snas_districts").select("postcode_prefix, name_en, name_so, is_urban, survey_status").eq("postcode_prefix", prefix.upper()).execute()
-        if not res.data:
-            raise HTTPException(status_code=404, detail=f"Postcode '{prefix.upper()}' not found")
-        return res.data[0]
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/v1/postcode/{prefix}")
+def postcode(prefix: str):
+    data, _ = db("snas_districts", f"postcode_prefix=eq.{prefix.upper()}&select=postcode_prefix,name_en,name_so,is_urban,survey_status")
+    if not data:
+        raise HTTPException(404, f"Postcode '{prefix}' not found")
+    return data[0]
 
-@app.get("/v1/geocode", tags=["Address Lookup"])
-def forward_geocode(q: str = Query(...), limit: int = Query(10, ge=1, le=50)):
-    try:
-        res = supabase.table("snas_streets").select("street_id, name_en, name_so, highway_class, is_nameless, naming_tier, district_id").ilike("name_en", f"%{q}%").limit(limit).execute()
-        res_so = supabase.table("snas_streets").select("street_id, name_en, name_so, highway_class, is_nameless, naming_tier, district_id").ilike("name_so", f"%{q}%").limit(limit).execute()
-        seen = set()
-        results = []
-        for row in (res.data or []) + (res_so.data or []):
-            if row["street_id"] not in seen:
-                seen.add(row["street_id"])
-                results.append(row)
-        return {"query": q, "count": len(results), "results": results[:limit]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/v1/geocode")
+def geocode(q: str = Query(...), limit: int = Query(10)):
+    data, _ = db("snas_streets", f"name_en=ilike.*{q}*&select=street_id,name_en,name_so,highway_class,is_nameless,district_id&limit={limit}")
+    return {"query": q, "count": len(data), "results": data}
 
-@app.get("/v1/districts/{prefix}/streets", tags=["Address Lookup"])
-def district_streets(prefix: str, nameless: Optional[bool] = Query(None), limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0)):
-    try:
-        d = supabase.table("snas_districts").select("district_id, name_en").eq("postcode_prefix", prefix.upper()).execute()
-        if not d.data:
-            raise HTTPException(status_code=404, detail=f"District '{prefix.upper()}' not found")
-        district_id = d.data[0]["district_id"]
-        q = supabase.table("snas_streets").select("street_id, name_en, name_so, highway_class, is_nameless, naming_tier").eq("district_id", district_id).range(offset, offset + limit - 1)
-        if nameless is not None:
-            q = q.eq("is_nameless", nameless)
-        res = q.execute()
-        return {"district": prefix.upper(), "district_name": d.data[0]["name_en"], "count": len(res.data), "streets": res.data}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/v1/districts/{prefix}/streets")
+def district_streets(prefix: str, nameless: Optional[bool] = None, limit: int = 100, offset: int = 0):
+    d, _ = db("snas_districts", f"postcode_prefix=eq.{prefix.upper()}&select=district_id,name_en")
+    if not d:
+        raise HTTPException(404, "District not found")
+    did = d[0]["district_id"]
+    extra = f"&is_nameless=eq.{str(nameless).lower()}" if nameless is not None else ""
+    data, _ = db("snas_streets", f"district_id=eq.{did}&select=street_id,name_en,name_so,highway_class,is_nameless&limit={limit}&offset={offset}{extra}")
+    return {"district": prefix.upper(), "count": len(data), "streets": data}
 
-@app.get("/v1/figures", tags=["Reference Data"])
-def list_figures(tier: Optional[int] = Query(None), gender: Optional[str] = Query(None)):
-    try:
-        q = supabase.table("snas_figures").select("figure_id, full_name_so, full_name_en, tier, category, gender, birth_year, death_year, biography_en, values_tags").eq("is_eligible", True)
-        if tier:
-            q = q.eq("tier", tier)
-        if gender:
-            q = q.eq("gender", gender.upper())
-        res = q.order("tier").order("full_name_en").execute()
-        return {"count": len(res.data), "figures": res.data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/v1/figures")
+def figures(tier: Optional[int] = None, gender: Optional[str] = None):
+    params = "is_eligible=eq.true&select=figure_id,full_name_so,full_name_en,tier,category,gender,biography_en&order=tier"
+    if tier:
+        params += f"&tier=eq.{tier}"
+    if gender:
+        params += f"&gender=eq.{gender.upper()}"
+    data, _ = db("snas_figures", params)
+    return {"count": len(data), "figures": data}
 
-@app.get("/v1/gender-audit", tags=["Compliance"])
-def gender_audit():
-    try:
-        res = supabase.table("vw_district_gender_stats").select("*").execute()
-        data = res.data or []
-        return {"total_districts": len(data), "compliant": sum(1 for r in data if r.get("mandate_status") == "COMPLIANT"), "non_compliant": sum(1 for r in data if r.get("mandate_status") == "NON_COMPLIANT"), "districts": data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/v1/survey-status", tags=["Operations"])
-def survey_status():
-    try:
-        res = supabase.table("vw_district_survey_status").select("*").execute()
-        return {"total_districts": len(res.data), "districts": res.data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/v1/survey-status")
+def survey():
+    data, _ = db("vw_district_survey_status")
+    return {"total": len(data), "districts": data}
 
 if __name__ == "__main__":
     import uvicorn
