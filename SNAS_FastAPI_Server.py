@@ -36,8 +36,8 @@ def stats():
     _, s = db("snas_states")
     _, d = db("snas_districts")
     _, total = db("snas_streets")
-    _, named = db("snas_streets", "is_nameless=eq.false")
-    _, nameless = db("snas_streets", "is_nameless=eq.true")
+    _, named = db("snas_streets", "name_so=not.is.null")
+    _, nameless = db("snas_streets", "name_so=is.null")
     return {"stats": {"states": s, "districts": d, "total_streets": total, "named_streets": named, "nameless_streets": nameless, "pct_named": round(named/total*100,1) if total else 0}}
 
 @app.get("/v1/states")
@@ -59,7 +59,7 @@ def postcode(prefix: str):
 
 @app.get("/v1/geocode")
 def geocode(q: str = Query(...), limit: int = Query(10)):
-    data, _ = db("snas_streets", f"name_en=ilike.*{q}*&select=street_id,name_en,name_so,highway_class,is_nameless,district_id&limit={limit}")
+    data, _ = db("snas_streets", f"name_so=ilike.*{q}*&select=street_id,name_en,name_so,highway_class,is_nameless,district_id&limit={limit}")
     return {"query": q, "count": len(data), "results": data}
 
 @app.get("/v1/districts/{prefix}/streets")
